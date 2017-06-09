@@ -174,9 +174,6 @@ def read_data(source_path, target_path, max_seq_len=100):
                 y = [int(x) for x in target.split()] + [EOS_ID]
 
                 if len(source_ids) < max_seq_len and len(target_ids) < max_seq_len:
-                    source_ids = padding(source_ids)
-                    target_ids = padding(target_ids)
-                    y = padding(y)
                     data_set.append([source_ids, target_ids, y])
                 source, target = source_file.readline(), target_file.readline()
     return data_set
@@ -205,15 +202,19 @@ def nextBatch(data_set, start_index, batch_size=128):
 
 def nextRandomBatch(data_set, batch_size=128):
     encoder_inputs, decoder_inputs, y_outputs = [], [], []
+    target_weights = []
     for _ in range(batch_size):
         encoder_input, decoder_input, y_output = random.choice(data_set)
-        encoder_inputs.append(encoder_input)
-        decoder_inputs.append(decoder_input)
-        y_outputs.append(y_output)
+        target_weight = [1 for _ in y_output]
+        target_weights.append(padding(target_weight))
+        encoder_inputs.append(padding(encoder_input))
+        decoder_inputs.append(padding(decoder_input))
+        y_outputs.append(padding(y_output))
     batch_encoder_inputs = np.array(encoder_inputs, dtype=np.int32)
     batch_decoder_inputs = np.array(decoder_inputs, dtype=np.int32)
     batch_y_outputs = np.array(y_outputs, dtype=np.int32)
-    return batch_encoder_inputs, batch_decoder_inputs, batch_y_outputs
+    batch_target_weights = np.array(target_weights, dtype=np.float32)
+    return batch_encoder_inputs, batch_decoder_inputs, batch_y_outputs, batch_target_weights
 
 
 def prepare_data(data_dir):

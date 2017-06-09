@@ -3,6 +3,7 @@ import data_utils
 import os
 import math
 import sys
+import time
 
 
 class Seq2SeqModel(object):
@@ -26,38 +27,39 @@ class Seq2SeqModel(object):
         self.global_step = tf.Variable(0, trainable=False)
 
         # placeholder of encoder_inputs, decoder_inputs, y_outputs
-        self.encoder_inputs, self.decoder_inputs, self.y_outputs = self.create_placeholder()
+        self.encoder_inputs, self.decoder_inputs, self.y_outputs, self.target_weights = self.create_placeholder()
 
         # source and target word embedding
-        self.source_embedding = tf.get_variable("source_emb", [self.source_vocab_size, self.emb_dim])
-        self.target_embedding = tf.get_variable("target_emb", [self.target_vocab_size, self.emb_dim])
+        self.source_embedding = tf.Variable(tf.random_uniform([self.source_vocab_size, self.emb_dim], 0.0, 1.0), name="source_emb")
+        self.target_embedding = tf.Variable(tf.random_uniform([self.target_vocab_size, self.emb_dim], 0.0, 1.0), name="target_emb")
 
-        self.softmax_w = tf.get_variable("softmax_w", [self.hidden_dim * 2, self.target_vocab_size])
-        self.softmax_b = tf.get_variable("softmax_b", [self.target_vocab_size])
-        self.attention_W = tf.get_variable("attention_W", [self.hidden_dim * 4, self.attention_hidden_dim])
-        self.attention_U = tf.get_variable("attention_U", [self.hidden_dim * 2, self.attention_hidden_dim])
-        self.attention_V = tf.get_variable("attention_V", [self.attention_hidden_dim, 1])
+        self.softmax_w = tf.Variable(tf.random_uniform([self.hidden_dim * 2, self.target_vocab_size], 0.0, 1.0), name="softmax_w", dtype=tf.float32)
+        self.softmax_b = tf.Variable(tf.random_uniform([self.target_vocab_size], 0.0, 1.0), name="softmax_b", dtype=tf.float32)
+
+        self.attention_W = tf.Variable(tf.random_uniform([self.hidden_dim * 4, self.attention_hidden_dim], 0.0, 1.0), name="attention_W")
+        self.attention_U = tf.Variable(tf.random_uniform([self.hidden_dim * 2, self.attention_hidden_dim], 0.0, 1.0), name="attention_U")
+        self.attention_V = tf.Variable(tf.random_uniform([self.attention_hidden_dim, 1], 0.0, 1.0), name="attention_V")
 
         self.encoder_inputs_emb = tf.nn.embedding_lookup(self.source_embedding, self.encoder_inputs)
         self.encoder_inputs_emb = tf.transpose(self.encoder_inputs_emb, [1, 0, 2])
-        self.encoder_inputs_emb = tf.reshape(self.encoder_inputs_emb, [-1, self.emb_dim])
-        self.encoder_inputs_emb = tf.split(0, self.num_steps, self.encoder_inputs_emb)
+        # self.encoder_inputs_emb = tf.reshape(self.encoder_inputs_emb, [-1, self.emb_dim])
+        # self.encoder_inputs_emb = tf.split(0, self.num_steps, self.encoder_inputs_emb)
 
         self.decoder_inputs_emb = tf.nn.embedding_lookup(self.target_embedding, self.decoder_inputs)
         self.decoder_inputs_emb = tf.transpose(self.decoder_inputs_emb, [1, 0, 2])
         self.decoder_inputs_emb = tf.reshape(self.decoder_inputs_emb, [-1, self.emb_dim])
-        self.decoder_inputs_emb = tf.split(0, self.num_steps, self.decoder_inputs_emb)
+        self.decoder_inputs_emb = tf.split(self.decoder_inputs_emb, self.num_steps, 0)
 
         # lstm cell
-        self.enc_lstm_cell_fw = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_dim)
-        self.enc_lstm_cell_bw = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_dim)
-        self.dec_lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_dim * 2)
+        self.enc_lstm_cell_fw = tf.contrib.rnn.BasicLSTMCell(self.hidden_dim, state_is_tuple=False)
+        self.enc_lstm_cell_bw = tf.contrib.rnn.BasicLSTMCell(self.hidden_dim, state_is_tuple=False)
+        self.dec_lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.hidden_dim * 2, state_is_tuple=False)
 
         # dropout
         if is_training:
-            self.enc_lstm_cell_fw = tf.nn.rnn_cell.DropoutWrapper(self.enc_lstm_cell_fw, output_keep_prob=(1 - self.dropout_rate))
-            self.enc_lstm_cell_bw = tf.nn.rnn_cell.DropoutWrapper(self.enc_lstm_cell_bw, output_keep_prob=(1 - self.dropout_rate))
-            self.dec_lstm_cell = tf.nn.rnn_cell.DropoutWrapper(self.dec_lstm_cell, output_keep_prob=(1 - self.dropout_rate))
+            # self.enc_lstm_cell_fw = tf.nn.rnn_cell.DropoutWrapper(self.enc_lstm_cell_fw, output_keep_prob=(1 - self.dropout_rate))
+            # self.enc_lstm_cell_bw = tf.nn.rnn_cell.DropoutWrapper(self.enc_lstm_cell_bw, output_keep_prob=(1 - self.dropout_rate))
+            self.dec_lstm_cell = tf.contrib.rnn.DropoutWrapper(self.dec_lstm_cell, output_keep_prob=(1 - self.dropout_rate))
 
         # get the length of each sample
         self.source_length = tf.reduce_sum(tf.sign(self.encoder_inputs), reduction_indices=1)
@@ -72,13 +74,17 @@ class Seq2SeqModel(object):
         else:
             self.dec_outputs = self.decode(self.dec_lstm_cell, enc_state, enc_outputs, self.loop_function)
         # softmax
-        self.outputs = tf.reshape(tf.concat(1, self.dec_outputs), [-1, self.hidden_dim * 2])
+        self.outputs = tf.reshape(tf.concat(self.dec_outputs, axis=1), [-1, self.hidden_dim * 2])
         self.logits = tf.add(tf.matmul(self.outputs, self.softmax_w), self.softmax_b)
         self.prediction = tf.nn.softmax(self.logits)
 
         self.y_output = tf.reshape(self.y_outputs, [-1])
         self.y_output = tf.one_hot(self.y_output, depth=self.target_vocab_size, on_value=1.0, off_value=0.0)
-        self.cross_entropy_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(self.logits, self.y_output))
+
+        self.target_weight = tf.reshape(self.target_weights, [-1])
+
+        cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels=self.y_output)
+        self.cross_entropy_loss = tf.reduce_mean(tf.multiply(self.target_weight, cross_entropy))
 
         # Gradients and SGD update operation for training the model.
         params = tf.trainable_variables()
@@ -88,23 +94,28 @@ class Seq2SeqModel(object):
         clipped_gradients, _ = tf.clip_by_global_norm(gradients, self.max_gradient_norm)
         self.updates = self.optimizer.apply_gradients(zip(clipped_gradients, params), global_step=self.global_step)
 
-        self.saver = tf.train.Saver(tf.all_variables())
+        self.saver = tf.train.Saver(tf.global_variables())
 
     def create_placeholder(self):
         encoder_input_pl = tf.placeholder(tf.int64, [None, self.num_steps])
         decoder_input_pl = tf.placeholder(tf.int64, [None, self.num_steps])
         y_output_pl = tf.placeholder(tf.int64, [None, self.num_steps])
-        return encoder_input_pl, decoder_input_pl, y_output_pl
+        target_weight = tf.placeholder(tf.float32, [None, self.num_steps])
+        return encoder_input_pl, decoder_input_pl, y_output_pl, target_weight
 
     def encode(self, cell_fw, cell_bw):
-        enc_outputs, output_state_fw, output_state_bw = tf.nn.bidirectional_rnn(
+        enc_outputs, (output_state_fw, output_state_bw) = tf.nn.bidirectional_dynamic_rnn(
             cell_fw,
             cell_bw,
             self.encoder_inputs_emb,
             dtype=tf.float32,
-            sequence_length=self.source_length
+            sequence_length=self.source_length,
+            time_major=True
         )
-        enc_state = tf.concat(1, [output_state_fw, output_state_bw])
+        enc_state = tf.concat([output_state_fw, output_state_bw], axis=1)
+        enc_outputs = tf.concat(enc_outputs, axis=2)
+        enc_outputs = tf.reshape(enc_outputs, [-1, self.emb_dim * 2])
+        enc_outputs = tf.split(enc_outputs, self.num_steps, 0)
         return enc_outputs, enc_state
 
     def attention(self, prev_state, enc_outputs):
@@ -119,14 +130,14 @@ class Seq2SeqModel(object):
             atten_hidden = tf.tanh(tf.add(tf.matmul(prev_state, self.attention_W), tf.matmul(output, self.attention_U)))
             e_i_j = tf.matmul(atten_hidden, self.attention_V)
             e_i.append(e_i_j)
-        e_i = tf.concat(1, e_i)
+        e_i = tf.concat(e_i, axis=1)
         # e_i = tf.exp(e_i)
         alpha_i = tf.nn.softmax(e_i)
-        alpha_i = tf.split(1, self.num_steps, alpha_i)
+        alpha_i = tf.split(alpha_i, self.num_steps, 1)
         for alpha_i_j, output in zip(alpha_i, enc_outputs):
-            c_i_j = tf.mul(alpha_i_j, output)
+            c_i_j = tf.multiply(alpha_i_j, output)
             c_i.append(c_i_j)
-        c_i = tf.reshape(tf.concat(1, c_i), [-1, self.num_steps, self.hidden_dim * 2])
+        c_i = tf.reshape(tf.concat(c_i, axis=1), [-1, self.num_steps, self.hidden_dim * 2])
         c_i = tf.reduce_sum(c_i, 1)
         return c_i
 
@@ -142,7 +153,7 @@ class Seq2SeqModel(object):
             if i > 0:
                 tf.get_variable_scope().reuse_variables()
             c_i = self.attention(state, enc_outputs)
-            inp = tf.concat(1, [inp, c_i])
+            inp = tf.concat([inp, c_i], axis=1)
             output, state = cell(inp, state)
             # print output.eval()
             outputs.append(output)
@@ -162,57 +173,60 @@ class Seq2SeqModel(object):
         emb_prev = tf.nn.embedding_lookup(self.target_embedding, prev_sympol)
         return emb_prev
 
-    def train(self, sess, save_path, train_set, val_set):
+    def train(self, sess, save_path, train_set, val_set, steps_per_checkpoint):
         num_iterations = int(math.ceil(1.0 * len(train_set) / self.batch_size))
         print("Number of iterations: %d" % num_iterations)
+
+        step_time, loss = 0.0, 0.0
+        current_step = 0
         previous_losses = []
-        for epoch in range(self.num_epochs):
-            print("current epoch: %d" % epoch)
-            for iteration in range(num_iterations):
-                batch_encoder_inputs, batch_decoder_inputs, batch_y_outputs = \
-                    data_utils.nextBatch(train_set,
-                                         start_index=iteration * self.batch_size,
-                                         batch_size=self.batch_size)
-                _, loss_train = \
-                    sess.run(
-                        [
-                            self.updates,
-                            self.cross_entropy_loss,
-                        ],
-                        feed_dict={
-                            self.encoder_inputs: batch_encoder_inputs,
-                            self.decoder_inputs: batch_decoder_inputs,
-                            self.y_outputs: batch_y_outputs
-                        })
+        while True:
+            start_time = time.time()
+            batch_encoder_inputs, batch_decoder_inputs, batch_y_outputs, batch_target_weights = \
+                data_utils.nextRandomBatch(train_set, batch_size=self.batch_size)
+            _, step_loss = \
+                sess.run(
+                    [
+                        self.updates,
+                        self.cross_entropy_loss,
+                    ],
+                    feed_dict={
+                        self.encoder_inputs: batch_encoder_inputs,
+                        self.decoder_inputs: batch_decoder_inputs,
+                        self.y_outputs: batch_y_outputs
+                    })
+            step_time += (time.time() - start_time) / steps_per_checkpoint
+            loss += step_loss / steps_per_checkpoint
+            current_step += 1
 
-                if len(previous_losses) > 2 and loss_train > max(previous_losses[-3:]):
+            # Once in a while, we save checkpoint, print statistics, and run evals.
+            if current_step % steps_per_checkpoint == 0:
+                perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
+                print ("global step %d learning rate %.4f step-time %.2f perplexity "
+                       "%.2f" % (self.global_step.eval(), self.learning_rate.eval(),
+                                 step_time, perplexity))
+                if len(previous_losses) > 2 and loss > max(previous_losses[-3:]):
                     sess.run(self.learning_rate_decay_op)
-                previous_losses.append(loss_train)
+                previous_losses.append(loss)
+                checkpoint_path = os.path.join(save_path, "translate.ckpt")
+                self.saver.save(sess, checkpoint_path, global_step=self.global_step)
+                step_time, loss = 0.0, 0.0
 
-                if iteration % 10 == 0:
-                    # ppl = math.exp(loss_train)
-                    print("    iteration: %d, train loss: %5f" % (iteration, loss_train))
-                if iteration % 100 == 0:
-                    batch_encoder_val, batch_decoder_val, batch_y_val = \
-                        data_utils.nextRandomBatch(val_set, batch_size=self.batch_size)
-                    loss_val = \
-                        sess.run(
-                            self.cross_entropy_loss,
-                            feed_dict={
-                                self.encoder_inputs: batch_encoder_val,
-                                self.decoder_inputs: batch_decoder_val,
-                                self.y_outputs: batch_y_val
-                            })
-                    # ppl_val = math.exp(loss_val)
-                    print("    iteration: %d, valid loss: %5f" % (iteration, loss_val))
-
-                    if loss_val < self.min_loss:
-                        self.min_loss = loss_val
-                        checkpoint_path = os.path.join(save_path, "translate.ckpt")
-                        print("Saving model in %s" % checkpoint_path)
-                        self.saver.save(sess, checkpoint_path, global_step=self.global_step)
-                        # self.saver.save(sess, save_path)
-                        print("saved the best model with loss: %.5f" % loss_val)
+            if current_step % 1000 == 0:
+                batch_encoder_val, batch_decoder_val, batch_y_val, batch_target_weights_val = \
+                    data_utils.nextRandomBatch(val_set, batch_size=self.batch_size)
+                loss_val = \
+                    sess.run(
+                        self.cross_entropy_loss,
+                        feed_dict={
+                            self.encoder_inputs: batch_encoder_val,
+                            self.decoder_inputs: batch_decoder_val,
+                            self.y_outputs: batch_y_val,
+                            self.target_weights: batch_target_weights_val
+                        })
+                eval_ppl = math.exp(float(loss_val)) if loss_val < 300 else float("inf")
+                print("  eval: perplexity %.2f" % (eval_ppl))
+                sys.stdout.flush()
 
     def test(self, sess, token_ids):
         # We decode one sentence at a time.

@@ -10,6 +10,7 @@ tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
                           "Learning rate decays by this much.")
 tf.app.flags.DEFINE_integer("epochs", 10, "The number of epoch.")
+tf.app.flags.DEFINE_integer("steps_per_checkpoint", 100, "The number of epoch.")
 tf.app.flags.DEFINE_integer("cn_vocab_size", 40000, "Chinese vocabulary size.")
 tf.app.flags.DEFINE_integer("en_vocab_size", 40000, "English vocabulary size.")
 
@@ -37,7 +38,7 @@ def create_model(sess, is_training=True):
         model.saver.restore(sess, ckpt.model_checkpoint_path)
     else:
         print("Created model with fresh parameters.")
-        sess.run(tf.initialize_all_variables())
+        sess.run(tf.global_variables_initializer())
     return model
 
 
@@ -47,7 +48,7 @@ def main(_):
     with tf.Session(config=config) as sess:
         model = create_model(sess, True)
         print("Training model")
-        model.train(sess, FLAGS.train_dir, train_set, val_set)
+        model.train(sess, FLAGS.train_dir, train_set, val_set, FLAGS.steps_per_checkpoint)
         print("final best loss is: %f" % model.min_loss)
 
         end_time = time.time()

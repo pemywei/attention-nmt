@@ -33,7 +33,7 @@ def create_model(sess, is_training=True):
 
     else:
         print("Created model with fresh parameters.")
-        sess.run(tf.initialize_all_variables())
+        sess.run(tf.global_variables_initializer())
     return model
 
 
