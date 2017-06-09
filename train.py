@@ -18,7 +18,6 @@ FLAGS = tf.app.flags.FLAGS
 
 num_steps = 100
 
-start_time = time.time()
 # Prepare data.
 print("Preparing data in %s" % FLAGS.data_dir)
 source_path = os.path.join(FLAGS.data_dir, "source_token_ids.txt")
@@ -49,11 +48,6 @@ def main(_):
         model = create_model(sess, True)
         print("Training model")
         model.train(sess, FLAGS.train_dir, train_set, val_set, FLAGS.steps_per_checkpoint)
-        print("final best loss is: %f" % model.min_loss)
-
-        end_time = time.time()
-        print("time used %f(hour)" % ((end_time - start_time) / 3600))
-
 
 if __name__ == "__main__":
     tf.app.run()
