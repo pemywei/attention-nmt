@@ -226,7 +226,7 @@ class Seq2SeqModel(object):
                         })
                 eval_ppl = math.exp(float(loss_val)) if loss_val < 300 else float("inf")
                 print("  eval: perplexity %.2f" % (eval_ppl))
-                sys.stdout.flush()
+            sys.stdout.flush()
 
     def test(self, sess, token_ids):
         # We decode one sentence at a time.
