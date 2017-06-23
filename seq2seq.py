@@ -173,7 +173,7 @@ class Seq2SeqModel(object):
         emb_prev = tf.nn.embedding_lookup(self.target_embedding, prev_sympol)
         return emb_prev
 
-    def train(self, sess, save_path, train_set, val_set, steps_per_checkpoint):
+    def train(self, sess, save_path, train_set, val_set, steps_per_checkpoint, train_log):
         num_iterations = int(math.ceil(1.0 * len(train_set) / self.batch_size))
         print("Number of iterations: %d" % num_iterations)
 
@@ -181,6 +181,7 @@ class Seq2SeqModel(object):
         current_step = 0
         previous_losses = []
         while True:
+            log_file = open(train_log, 'a')
             start_time = time.time()
             batch_encoder_inputs, batch_decoder_inputs, batch_y_outputs, batch_target_weights = \
                 data_utils.nextRandomBatch(train_set, batch_size=self.batch_size)
@@ -202,9 +203,10 @@ class Seq2SeqModel(object):
             # Once in a while, we save checkpoint, print statistics, and run evals.
             if current_step % steps_per_checkpoint == 0:
                 perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
-                print ("global step %d learning rate %.4f step-time %.2f perplexity "
+                log_file.write("global step %d learning rate %.4f step-time %.2f perplexity "
                        "%.2f" % (self.global_step.eval(), self.learning_rate.eval(),
                                  step_time, perplexity))
+                log_file.write("\n")
                 if len(previous_losses) > 2 and loss > max(previous_losses[-3:]):
                     sess.run(self.learning_rate_decay_op)
                 previous_losses.append(loss)
@@ -225,8 +227,10 @@ class Seq2SeqModel(object):
                             self.target_weights: batch_target_weights_val
                         })
                 eval_ppl = math.exp(float(loss_val)) if loss_val < 300 else float("inf")
-                print("  eval: perplexity %.2f" % (eval_ppl))
+                log_file.write("global step %d eval: perplexity %.2f" % (self.global_step.eval(), eval_ppl))
+                log_file.write("\n")
             sys.stdout.flush()
+            log_file.close()
 
     def test(self, sess, token_ids):
         # We decode one sentence at a time.
